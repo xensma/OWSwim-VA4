@@ -27,6 +27,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+
       - name: Install Pillow
         run: |
           python -m pip install --upgrade pip
@@ -39,20 +40,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -n "${{ secrets.CIQ_DEV_KEY }}" ]]; then
+          if [ -n "${{ secrets.CIQ_DEV_KEY }}" ]; then
             printf '%s' "${{ secrets.CIQ_DEV_KEY }}" > "${{ github.workspace }}/developer_key"
           fi
-          if [[ ! -s "${{ github.workspace }}/developer_key" ]]; then
+          if [ ! -s "${{ github.workspace }}/developer_key" ]; then
             echo "ERREUR: developer_key manquant. Ajoute le secret CIQ_DEV_KEY." >&2
             exit 1
           fi
 
-              - name: Generate launcher icon (40x40 PNG)
+      - name: Generate launcher icon (40x40 PNG)
         run: |
           python -c "from PIL import Image, ImageDraw; import os; p='resources/drawables'; os.makedirs(p, exist_ok=True); img=Image.new('RGBA',(40,40),(0,0,0,0)); d=ImageDraw.Draw(img); d.ellipse((8,8,32,32), outline=(0,0,0,255), width=2); d.line((20,10,20,30), fill=(0,0,0,255), width=2); d.line((12,20,28,20), fill=(0,0,0,255), width=2); img.save(os.path.join(p,'LauncherIcon.png'))"
 
-
       - name: Sanity checks
+        shell: bash
         run: |
           set -euxo pipefail
           test -s "$JAR"
@@ -72,22 +73,19 @@ jobs:
           built=""
           for dev in $DEVICES; do
             DBG_XML="$DEVICES_DIR/${dev}-api.debug.xml"
-            [[ -s "$DBG_XML" ]] || { echo "Skip $dev (no $DBG_XML)"; continue; }
-            OUT="$OUTDIR/OWSwim_${dev}.prg"
-            echo "=== Compile for $dev -> $OUT ==="
-            java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
-              -o "$OUT" \
-              -f "$JUNGLE" \
-              -y "$KEY" \
-              -b "$TOOLS/api.mir" \
-              -a "$TOOLS/api.db" \
-              -i "$DBG_XML" \
-              -d "$dev" \
-              -w -r
-            built="$built $dev"
+            if [ -s "$DBG_XML" ]; then
+              OUT="$OUTDIR/OWSwim_${dev}.prg"
+              echo "=== Compile for $dev -> $OUT ==="
+              java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
+                -o "$OUT" -f "$JUNGLE" -y "$KEY" -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
+                -i "$DBG_XML" -d "$dev" -w -r
+              built="$built $dev"
+            else
+              echo "Skip $dev (no $DBG_XML)"
+            fi
           done
           echo "built=$built" >> "$GITHUB_OUTPUT"
-          if [[ -z "$built" ]]; then
+          if [ -z "$built" ]; then
             echo "Aucun device compilé (ajoute devices/*-api.debug.xml)."
             exit 1
           fi
@@ -105,13 +103,7 @@ jobs:
             IQ="$OUTDIR/OWSwim_${dev}.iq"
             echo "=== Package $dev -> $IQ ==="
             java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
-              -e \
-              -o "$IQ" \
-              -f "$JUNGLE" \
-              -y "$KEY" \
-              -i "$DBG_XML" \
-              -d "$dev" \
-              -w -r
+              -e -o "$IQ" -f "$JUNGLE" -y "$KEY" -i "$DBG_XML" -d "$dev" -w -r
           done
 
       - uses: actions/upload-artifact@v4
