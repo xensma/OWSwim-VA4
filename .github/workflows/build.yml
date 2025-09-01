@@ -9,11 +9,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
+      # Emplacements dans le repo
       JAR: ${{ github.workspace }}/tools/monkeybrains-8.2.3.jar
       JUNGLE: ${{ github.workspace }}/monkey.jungle
       OUTDIR: ${{ github.workspace }}/bin
       TOOLS: ${{ github.workspace }}/tools
       DEVICES_DIR: ${{ github.workspace }}/devices
+      # Nous gardons des IDs ASCII ici, on les mappe ensuite vers les IDs accentués attendus par le SDK 8.x
       DEVICES: "vivoactive4 vivoactive4s"
 
     steps:
@@ -60,12 +62,10 @@ jobs:
           test -s "$TOOLS/api.db"
           test -s "$TOOLS/api.mir"
           test -s "$TOOLS/compilerInfo.xml"
-          test -s "$JUNGLE"
           test -s "$TOOLS/projectInfo.xml"
+          test -s "$JUNGLE"
           test -s "${{ github.workspace }}/manifest.xml"
           java -Xms512m -Dfile.encoding=UTF-8 -jar "$JAR" -v
-          test -s "$TOOLS/projectInfo.xml"
-
 
       - name: Build .prg per device
         id: compile
@@ -75,17 +75,31 @@ jobs:
           KEY="${{ github.workspace }}/developer_key"
           built=""
           for dev in $DEVICES; do
-            DBG_XML="$DEVICES_DIR/${dev}-api.debug.xml"
-            if [ -s "$DBG_XML" ]; then
-              OUT="$OUTDIR/OWSwim_${dev}.prg"
-              echo "=== Compile for $dev -> $OUT ==="
-              java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
-                -o "$OUT" -f "$JUNGLE" -y "$KEY" -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
-                -i "$DBG_XML" -d "$dev" -w -r
-              built="$built $dev"
-            else
+            # Map ASCII -> IDs accentués attendus par monkeyc (SDK 8.x)
+            case "$dev" in
+              vivoactive4)  DID="vívoactive4";  DBG_XML="$DEVICES_DIR/vivoactive4-api.debug.xml" ;;
+              vivoactive4s) DID="vívoactive4s"; DBG_XML="$DEVICES_DIR/vivoactive4s-api.debug.xml" ;;
+              *)            DID="$dev";        DBG_XML="$DEVICES_DIR/${dev}-api.debug.xml"       ;;
+            esac
+
+            if [ ! -s "$DBG_XML" ]; then
               echo "Skip $dev (no $DBG_XML)"
+              continue
             fi
+
+            OUT="$OUTDIR/OWSwim_${dev}.prg"
+            echo "=== Compile for $dev (ID:$DID) -> $OUT ==="
+            java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
+              -o "$OUT" \
+              -f "$JUNGLE" \
+              -y "$KEY" \
+              -b "$TOOLS/api.mir" \
+              -a "$TOOLS/api.db" \
+              -i "$DBG_XML" \
+              -d "$DID" \
+              -p "$TOOLS/projectInfo.xml" \
+              -w -r
+            built="$built $dev"
           done
           echo "built=$built" >> "$GITHUB_OUTPUT"
           if [ -z "$built" ]; then
@@ -102,11 +116,22 @@ jobs:
           set -euo pipefail
           KEY="${{ github.workspace }}/developer_key"
           for dev in $BUILT_DEVICES; do
-            DBG_XML="$DEVICES_DIR/${dev}-api.debug.xml"
+            case "$dev" in
+              vivoactive4)  DID="vívoactive4";  DBG_XML="$DEVICES_DIR/vivoactive4-api.debug.xml" ;;
+              vivoactive4s) DID="vívoactive4s"; DBG_XML="$DEVICES_DIR/vivoactive4s-api.debug.xml" ;;
+              *)            DID="$dev";        DBG_XML="$DEVICES_DIR/${dev}-api.debug.xml"       ;;
+            esac
             IQ="$OUTDIR/OWSwim_${dev}.iq"
-            echo "=== Package $dev -> $IQ ==="
+            echo "=== Package $dev (ID:$DID) -> $IQ ==="
             java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
-              -e -o "$IQ" -f "$JUNGLE" -y "$KEY" -i "$DBG_XML" -d "$dev" -w -r
+              -e \
+              -o "$IQ" \
+              -f "$JUNGLE" \
+              -y "$KEY" \
+              -i "$DBG_XML" \
+              -d "$DID" \
+              -p "$TOOLS/projectInfo.xml" \
+              -w -r
           done
 
       - uses: actions/upload-artifact@v4
