@@ -61,6 +61,7 @@ jobs:
           test -s "$TOOLS/api.mir"
           test -s "$TOOLS/compilerInfo.xml"
           test -s "$JUNGLE"
+          test -s "$TOOLS/projectInfo.xml"
           test -s "${{ github.workspace }}/manifest.xml"
           java -Xms512m -Dfile.encoding=UTF-8 -jar "$JAR" -v
 
