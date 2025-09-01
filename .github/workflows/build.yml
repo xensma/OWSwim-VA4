@@ -53,16 +53,6 @@ jobs:
         run: |
           python -c "from PIL import Image, ImageDraw; import os; p='resources/drawables'; os.makedirs(p, exist_ok=True); img=Image.new('RGBA',(40,40),(0,0,0,0)); d=ImageDraw.Draw(img); d.ellipse((8,8,32,32), outline=(0,0,0,255), width=2); d.line((20,10,20,30), fill=(0,0,0,255), width=2); d.line((12,20,28,20), fill=(0,0,0,255), width=2); img.save(os.path.join(p,'LauncherIcon.png'))"
 
-      - name: Create minimal devices.xml (for CI)
-        run: |
-          cat > "$TOOLS/devices.xml" <<'XML'
-<?xml version="1.0" encoding="UTF-8"?>
-<devices>
-  <device id="vivoactive4"/>
-  <device id="vivoactive4s"/>
-</devices>
-XML
-
       - name: Debug tree
         shell: bash
         run: |
@@ -99,16 +89,13 @@ XML
               echo "Skip $dev (no $DBG_XML)"
               continue
             fi
-
-            # Id réel lu depuis le XML (si accents)
             DID=$(grep -o 'device id="[^"]*"' "$DBG_XML" | head -1 | sed -E 's/.*id="([^"]+)".*/\1/')
             OUT="$OUTDIR/OWSwim_${dev}.prg"
             LOG="$OUTDIR/build_${dev}.log"
-
             echo "=== Compile for $dev (XML id:'$DID') -> $OUT ==="
 
             set +e
-            # Tentative A : -d (ASCII) + -u devices.xml
+            # A) -d (ASCII) + -u
             java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
               -o "$OUT" -f "$JUNGLE" -y "$KEY" \
               -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
@@ -118,9 +105,8 @@ XML
             rc=$?
 
             if [ $rc -ne 0 ]; then
-              echo "WARN: compile with -d '$dev' failed (rc=$rc). Tail:"
-              tail -n 80 "$LOG" || true
-              # Tentative B : -d (ID du XML) + -u
+              echo "WARN: -d '$dev' failed (rc=$rc). Tail:"; tail -n 80 "$LOG" || true
+              # B) -d (ID du XML) + -u
               java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
                 -o "$OUT" -f "$JUNGLE" -y "$KEY" \
                 -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
@@ -131,8 +117,8 @@ XML
             fi
 
             if [ $rc -ne 0 ]; then
-              echo "WARN: compile with explicit -d failed. Retrying WITHOUT -d (infer from -i)."
-              # Tentative C : pas de -d (laisse -i décider)
+              echo "WARN: explicit -d failed. Retrying WITHOUT -d (infer from -i)."
+              # C) Sans -d (laisser -i décider)
               java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
                 -o "$OUT" -f "$JUNGLE" -y "$KEY" \
                 -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
@@ -142,15 +128,12 @@ XML
               rc=$?
             fi
             set -e
-
             if [ $rc -ne 0 ]; then
               echo "::error::monkeyc failed for $dev. Full log follows"; sed -n '1,200p' "$LOG" || true
               exit $rc
             fi
-
             built="$built $dev"
           done
-
           echo "built=$built" >> "$GITHUB_OUTPUT"
           if [ -z "$built" ]; then
             echo "Aucun device compilé (ajoute devices/*-api.debug.xml)."
