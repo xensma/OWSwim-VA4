@@ -1,0 +1,80 @@
+name: build-owswim-va4
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      JAR: ${{ github.workspace }}/tools/monkeybrains-8.2.3.jar
+      JUNGLE: ${{ github.workspace }}/monkey.jungle
+      OUTDIR: ${{ github.workspace }}/bin
+      TOOLS: ${{ github.workspace }}/tools
+      DEVICES_DIR: ${{ github.workspace }}/devices
+      DEVICES: "vivoactive4 vivoactive4s"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - run: mkdir -p "$OUTDIR"
+      - name: Provide developer key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ secrets.CIQ_DEV_KEY }}" ]]; then
+            printf '%s' "${{ secrets.CIQ_DEV_KEY }}" > "${{ github.workspace }}/developer_key"
+          fi
+          if [[ ! -s "${{ github.workspace }}/developer_key" ]]; then
+            echo "ERREUR: developer_key manquant. Ajoute un secret CIQ_DEV_KEY." >&2; exit 1
+          fi
+      - name: Generate launcher icon (40x40 PNG)
+        run: |
+          python3 - << 'PY'
+from PIL import Image, ImageDraw; import os
+p="resources/drawables"; os.makedirs(p, exist_ok=True)
+img=Image.new("RGBA",(40,40),(0,0,0,0)); d=ImageDraw.Draw(img)
+d.ellipse((8,8,32,32), outline=(0,0,0,255), width=2)
+d.line((20,10,20,30), fill=(0,0,0,255), width=2)
+d.line((12,20,28,20), fill=(0,0,0,255), width=2)
+img.save(os.path.join(p,"LauncherIcon.png"))
+PY
+      - name: Sanity checks
+        run: |
+          set -euxo pipefail
+          test -s "$JAR" && test -s "$TOOLS/api.db" && test -s "$TOOLS/api.mir" && test -s "$TOOLS/compilerInfo.xml"
+          test -s "$JUNGLE" && test -s "${{ github.workspace }}/manifest.xml"
+          java -Xms512m -Dfile.encoding=UTF-8 -jar "$JAR" -v
+      - name: Build .prg per device
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY="${{ github.workspace }}/developer_key"
+          built=""
+          for dev in $DEVICES; do
+            DBG_XML="$DEVICES_DIR/${dev}-api.debug.xml"
+            [[ -s "$DBG_XML" ]] || { echo "Skip $dev (no $DBG_XML)"; continue; }
+            OUT="$OUTDIR/OWSwim_${dev}.prg"
+            echo "=== Compile for $dev -> $OUT ==="
+            java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
+              -o "$OUT" -f "$JUNGLE" -y "$KEY" -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
+              -i "$DBG_XML" -d "$dev" -w -r
+            built="$built $dev"
+          done
+          if [[ -z "$built" ]]; then echo "Aucun device compilé (ajoute devices/*-api.debug.xml)"; exit 1; fi
+          echo "BUILT_DEVICES=\"$built\"" >> $GITHUB_ENV
+      - name: Package .iq per device
+        if: env.BUILT_DEVICES != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY="${{ github.workspace }}/developer_key"
+          for dev in $BUILT_DEVICES; do
+            DBG_XML="$DEVICES_DIR/${dev}-api.debug.xml"
+            IQ="$OUTDIR/OWSwim_${dev}.iq"
+            echo "=== Package $dev -> $IQ ==="
+            java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
+              -e -o "$IQ" -f "$JUNGLE" -y "$KEY" -i "$DBG_XML" -d "$dev" -w -r
+          done
+      - uses: actions/upload-artifact@v4
+        with: { name: OWSwim_builds, path: bin/* }

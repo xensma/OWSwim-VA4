@@ -1,0 +1,5 @@
+# Fichier jungle pour OWSwim (vívoactive4/4S)
+project.manifest = manifest.xml
+base.sourcePath    = source
+base.resourcePath  = resources
+project.typecheck  = 2

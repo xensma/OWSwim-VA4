@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iq:manifest version="3" xmlns:iq="http://www.garmin.com/xml/connectiq">
+  <iq:application
+      id="com.corailconciergerie.ow_swim.maxence.vivoactive4.alpha.20250831.zzzzzzzz"
+      type="app"
+      name="@Strings.AppName"
+      entry="OWSwimApp"
+      launcherIcon="@Drawables.LauncherIcon"
+      minApiLevel="3.2.0">
+
+    <iq:products>
+      <iq:product id="vivoactive4"/>
+      <iq:product id="vivoactive4s"/>
+    </iq:products>
+
+    <iq:permissions>
+      <iq:uses-permission id="Positioning"/>
+      <iq:uses-permission id="Fitness"/>
+      <iq:uses-permission id="SensorHistory"/>
+    </iq:permissions>
+
+    <iq:languages>
+      <iq:language id="en"/>
+      <iq:language id="fr"/>
+    </iq:languages>
+
+    <iq:barrels/>
+  </iq:application>
+</iq:manifest>

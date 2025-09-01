@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<layouts>
+  <layout id="MainLayout">
+    <label id="title" x="center" y="30" font="GdxSmall" justification="center" text="@Strings.AppName"/>
+    <label id="hint"  x="center" y="80" font="GdxSmall" justification="center" text="Ready"/>
+  </layout>
+</layouts>
