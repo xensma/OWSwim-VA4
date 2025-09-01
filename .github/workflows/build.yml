@@ -64,6 +64,8 @@ jobs:
           test -s "$TOOLS/projectInfo.xml"
           test -s "${{ github.workspace }}/manifest.xml"
           java -Xms512m -Dfile.encoding=UTF-8 -jar "$JAR" -v
+          test -s "$TOOLS/projectInfo.xml"
+
 
       - name: Build .prg per device
         id: compile
