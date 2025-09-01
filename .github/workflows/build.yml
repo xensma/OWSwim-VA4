@@ -44,14 +44,15 @@ jobs:
           if [ -n "${{ secrets.CIQ_DEV_KEY }}" ]; then
             printf '%s' "${{ secrets.CIQ_DEV_KEY }}" > "${{ github.workspace }}/developer_key"
           fi
-          if [ ! -s "${{ github.workspace }}/developer_key" ]; then
-            echo "ERREUR: developer_key manquant. Ajoute le secret CIQ_DEV_KEY." >&2
-            exit 1
-          fi
+          [ -s "${{ github.workspace }}/developer_key" ] || { echo "ERREUR: developer_key manquant (secret CIQ_DEV_KEY absent)."; exit 1; }
 
       - name: Generate launcher icon (40x40 PNG)
         run: |
           python -c "from PIL import Image, ImageDraw; import os; p='resources/drawables'; os.makedirs(p, exist_ok=True); img=Image.new('RGBA',(40,40),(0,0,0,0)); d=ImageDraw.Draw(img); d.ellipse((8,8,32,32), outline=(0,0,0,255), width=2); d.line((20,10,20,30), fill=(0,0,0,255), width=2); d.line((12,20,28,20), fill=(0,0,0,255), width=2); img.save(os.path.join(p,'LauncherIcon.png'))"
+
+      - name: Create minimal devices.xml (no heredoc)
+        run: |
+          printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<devices>' '  <device id="vivoactive4"/>' '  <device id="vivoactive4s"/>' '</devices>' > "$TOOLS/devices.xml"
 
       - name: Debug tree
         shell: bash
@@ -85,60 +86,36 @@ jobs:
           built=""
           for dev in $DEVICES; do
             DBG_XML="$DEVICES_DIR/${dev}-api.debug.xml"
-            if [ ! -s "$DBG_XML" ]; then
-              echo "Skip $dev (no $DBG_XML)"
-              continue
-            fi
-            DID=$(grep -o 'device id="[^"]*"' "$DBG_XML" | head -1 | sed -E 's/.*id="([^"]+)".*/\1/')
+            if [ ! -s "$DBG_XML" ]; then echo "Skip $dev (no $DBG_XML)"; continue; fi
             OUT="$OUTDIR/OWSwim_${dev}.prg"
             LOG="$OUTDIR/build_${dev}.log"
-            echo "=== Compile for $dev (XML id:'$DID') -> $OUT ==="
-
+            echo "=== Compile for $dev -> $OUT ==="
             set +e
-            # A) -d (ASCII) + -u
+            # A) avec -d (ASCII) + -u devices.xml
             java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
               -o "$OUT" -f "$JUNGLE" -y "$KEY" \
               -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
               -i "$DBG_XML" -d "$dev" \
-              -p "$TOOLS/projectInfo.xml" -u "$TOOLS/devices.xml" -w -r \
-              >"$LOG" 2>&1
+              -p "$TOOLS/projectInfo.xml" -u "$TOOLS/devices.xml" -w -r >"$LOG" 2>&1
             rc=$?
-
             if [ $rc -ne 0 ]; then
-              echo "WARN: -d '$dev' failed (rc=$rc). Tail:"; tail -n 80 "$LOG" || true
-              # B) -d (ID du XML) + -u
-              java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
-                -o "$OUT" -f "$JUNGLE" -y "$KEY" \
-                -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
-                -i "$DBG_XML" -d "$DID" \
-                -p "$TOOLS/projectInfo.xml" -u "$TOOLS/devices.xml" -w -r \
-                >"$LOG" 2>&1
-              rc=$?
-            fi
-
-            if [ $rc -ne 0 ]; then
-              echo "WARN: explicit -d failed. Retrying WITHOUT -d (infer from -i)."
-              # C) Sans -d (laisser -i décider)
+              echo "WARN: retry without -d (infer from -i)"; 
+              # B) sans -d, on laisse -i décider
               java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
                 -o "$OUT" -f "$JUNGLE" -y "$KEY" \
                 -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
                 -i "$DBG_XML" \
-                -p "$TOOLS/projectInfo.xml" -w -r \
-                >"$LOG" 2>&1
+                -p "$TOOLS/projectInfo.xml" -u "$TOOLS/devices.xml" -w -r >"$LOG" 2>&1
               rc=$?
             fi
             set -e
             if [ $rc -ne 0 ]; then
-              echo "::error::monkeyc failed for $dev. Full log follows"; sed -n '1,200p' "$LOG" || true
-              exit $rc
+              echo "::error::monkeyc failed for $dev"; tail -n 120 "$LOG" || true; exit $rc
             fi
             built="$built $dev"
           done
           echo "built=$built" >> "$GITHUB_OUTPUT"
-          if [ -z "$built" ]; then
-            echo "Aucun device compilé (ajoute devices/*-api.debug.xml)."
-            exit 1
-          fi
+          [ -n "$built" ] || { echo "Aucun device compilé (ajoute devices/*-api.debug.xml)."; exit 1; }
 
       - name: Package .iq per device
         if: steps.compile.outputs.built != ''
