@@ -37,14 +37,36 @@ jobs:
         run: |
           mkdir -p "$OUTDIR" "$TOOLS"
 
-      - name: Provide developer key
+      - name: Provide developer key (DER)
         shell: bash
         run: |
           set -euo pipefail
-          if [ -n "${{ secrets.CIQ_DEV_KEY }}" ]; then
-            printf '%s' "${{ secrets.CIQ_DEV_KEY }}" > "${{ github.workspace }}/developer_key"
+          # 1) CIQ_DEV_KEY_B64 (recommandé) -> DER
+          if [ -n "${{ secrets.CIQ_DEV_KEY_B64 }}" ]; then
+            printf '%s' "${{ secrets.CIQ_DEV_KEY_B64 }}" | base64 -d > developer_key || {
+              echo "ERREUR: CIQ_DEV_KEY_B64 invalide (Base64)."; exit 1; }
+          # 2) CIQ_DEV_KEY (fallback): peut être DER binaire encodé en texte ou PEM
+          elif [ -n "${{ secrets.CIQ_DEV_KEY }}" ]; then
+            printf '%s' "${{ secrets.CIQ_DEV_KEY }}" > developer_key
           fi
-          [ -s "${{ github.workspace }}/developer_key" ] || { echo "ERREUR: developer_key manquant (secret CIQ_DEV_KEY absent)."; exit 1; }
+
+          if [ ! -s developer_key ]; then
+            echo "ERREUR: developer_key manquant. Renseigne CIQ_DEV_KEY_B64 (Base64 du .der) ou CIQ_DEV_KEY."; exit 1
+          fi
+
+          # Si c'est du PEM (-----BEGIN PRIVATE KEY-----), convertis en DER
+          if head -c 64 developer_key | grep -q 'BEGIN'; then
+            mv developer_key developer_key.pem
+            openssl pkcs8 -topk8 -nocrypt -inform PEM -outform DER \
+              -in developer_key.pem -out developer_key
+            rm -f developer_key.pem
+          fi
+
+          # Refuse un fichier texte
+          if file developer_key | grep -iq 'text'; then
+            echo "ERREUR: developer_key semble être du texte. Utilise CIQ_DEV_KEY_B64 (Base64 du fichier DER)."
+            exit 1
+          fi
 
       - name: Generate launcher icon (40x40 PNG)
         run: |
@@ -91,7 +113,7 @@ jobs:
             LOG="$OUTDIR/build_${dev}.log"
             echo "=== Compile for $dev -> $OUT ==="
             set +e
-            # A) avec -d (ASCII) + -u devices.xml
+            # A) avec -d ASCII + -u devices.xml
             java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
               -o "$OUT" -f "$JUNGLE" -y "$KEY" \
               -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
@@ -100,7 +122,7 @@ jobs:
             rc=$?
             if [ $rc -ne 0 ]; then
               echo "WARN: retry without -d (infer from -i)"; 
-              # B) sans -d, on laisse -i décider
+              # B) sans -d
               java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
                 -o "$OUT" -f "$JUNGLE" -y "$KEY" \
                 -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
