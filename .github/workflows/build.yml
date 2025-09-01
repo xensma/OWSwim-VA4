@@ -14,7 +14,6 @@ jobs:
       OUTDIR: ${{ github.workspace }}/bin
       TOOLS: ${{ github.workspace }}/tools
       DEVICES_DIR: ${{ github.workspace }}/devices
-      # Noms "ASCII" pour nos fichiers; l'ID réel sera lu dans le XML
       DEVICES: "vivoactive4 vivoactive4s"
 
     steps:
@@ -34,8 +33,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install Pillow
 
-      - name: Ensure bin/
-        run: mkdir -p "$OUTDIR"
+      - name: Ensure dirs
+        run: |
+          mkdir -p "$OUTDIR" "$TOOLS"
 
       - name: Provide developer key
         shell: bash
@@ -53,6 +53,25 @@ jobs:
         run: |
           python -c "from PIL import Image, ImageDraw; import os; p='resources/drawables'; os.makedirs(p, exist_ok=True); img=Image.new('RGBA',(40,40),(0,0,0,0)); d=ImageDraw.Draw(img); d.ellipse((8,8,32,32), outline=(0,0,0,255), width=2); d.line((20,10,20,30), fill=(0,0,0,255), width=2); d.line((12,20,28,20), fill=(0,0,0,255), width=2); img.save(os.path.join(p,'LauncherIcon.png'))"
 
+      - name: Create minimal devices.xml (for CI)
+        run: |
+          cat > "$TOOLS/devices.xml" <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<devices>
+  <device id="vivoactive4"/>
+  <device id="vivoactive4s"/>
+</devices>
+XML
+
+      - name: Debug tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "=== files (depth 2) ==="; find . -maxdepth 2 -type f | sort
+          echo "=== tools ==="; ls -l "$TOOLS" || true
+          echo "=== devices ==="; ls -l "$DEVICES_DIR" || true
+          echo "developer_key bytes:"; [ -f developer_key ] && wc -c developer_key || echo 0
+
       - name: Sanity checks
         shell: bash
         run: |
@@ -62,11 +81,12 @@ jobs:
           test -s "$TOOLS/api.mir"
           test -s "$TOOLS/compilerInfo.xml"
           test -s "$TOOLS/projectInfo.xml"
+          test -s "$TOOLS/devices.xml"
           test -s "$JUNGLE"
           test -s "${{ github.workspace }}/manifest.xml"
           java -Xms512m -Dfile.encoding=UTF-8 -jar "$JAR" -v
 
-      - name: Build .prg per device
+      - name: Build .prg per device (robuste)
         id: compile
         shell: bash
         run: |
@@ -74,50 +94,63 @@ jobs:
           KEY="${{ github.workspace }}/developer_key"
           built=""
           for dev in $DEVICES; do
-            # XML attendu dans devices/<dev>-api.debug.xml
             DBG_XML="$DEVICES_DIR/${dev}-api.debug.xml"
             if [ ! -s "$DBG_XML" ]; then
               echo "Skip $dev (no $DBG_XML)"
               continue
             fi
 
-            # Lire l'id réel du device depuis le XML (attribut id="...")
+            # Id réel lu depuis le XML (si accents)
             DID=$(grep -o 'device id="[^"]*"' "$DBG_XML" | head -1 | sed -E 's/.*id="([^"]+)".*/\1/')
-            echo "Found device id in XML: '$DID' for $dev"
-
             OUT="$OUTDIR/OWSwim_${dev}.prg"
-            echo "=== Compile for $dev (ID:$DID) -> $OUT ==="
+            LOG="$OUTDIR/build_${dev}.log"
 
-            # Tentative 1 : avec -d <ID>
+            echo "=== Compile for $dev (XML id:'$DID') -> $OUT ==="
+
             set +e
+            # Tentative A : -d (ASCII) + -u devices.xml
             java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
-              -o "$OUT" \
-              -f "$JUNGLE" \
-              -y "$KEY" \
-              -b "$TOOLS/api.mir" \
-              -a "$TOOLS/api.db" \
-              -i "$DBG_XML" \
-              -d "$DID" \
-              -p "$TOOLS/projectInfo.xml" \
-              -w -r
+              -o "$OUT" -f "$JUNGLE" -y "$KEY" \
+              -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
+              -i "$DBG_XML" -d "$dev" \
+              -p "$TOOLS/projectInfo.xml" -u "$TOOLS/devices.xml" -w -r \
+              >"$LOG" 2>&1
             rc=$?
+
+            if [ $rc -ne 0 ]; then
+              echo "WARN: compile with -d '$dev' failed (rc=$rc). Tail:"
+              tail -n 80 "$LOG" || true
+              # Tentative B : -d (ID du XML) + -u
+              java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
+                -o "$OUT" -f "$JUNGLE" -y "$KEY" \
+                -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
+                -i "$DBG_XML" -d "$DID" \
+                -p "$TOOLS/projectInfo.xml" -u "$TOOLS/devices.xml" -w -r \
+                >"$LOG" 2>&1
+              rc=$?
+            fi
+
+            if [ $rc -ne 0 ]; then
+              echo "WARN: compile with explicit -d failed. Retrying WITHOUT -d (infer from -i)."
+              # Tentative C : pas de -d (laisse -i décider)
+              java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
+                -o "$OUT" -f "$JUNGLE" -y "$KEY" \
+                -b "$TOOLS/api.mir" -a "$TOOLS/api.db" \
+                -i "$DBG_XML" \
+                -p "$TOOLS/projectInfo.xml" -w -r \
+                >"$LOG" 2>&1
+              rc=$?
+            fi
             set -e
 
             if [ $rc -ne 0 ]; then
-              echo "WARN: compile with -d '$DID' failed (rc=$rc). Retrying WITHOUT -d (infer from -i)."
-              java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
-                -o "$OUT" \
-                -f "$JUNGLE" \
-                -y "$KEY" \
-                -b "$TOOLS/api.mir" \
-                -a "$TOOLS/api.db" \
-                -i "$DBG_XML" \
-                -p "$TOOLS/projectInfo.xml" \
-                -w -r
+              echo "::error::monkeyc failed for $dev. Full log follows"; sed -n '1,200p' "$LOG" || true
+              exit $rc
             fi
 
             built="$built $dev"
           done
+
           echo "built=$built" >> "$GITHUB_OUTPUT"
           if [ -z "$built" ]; then
             echo "Aucun device compilé (ajoute devices/*-api.debug.xml)."
@@ -135,39 +168,21 @@ jobs:
           for dev in $BUILT_DEVICES; do
             DBG_XML="$DEVICES_DIR/${dev}-api.debug.xml"
             IQ="$OUTDIR/OWSwim_${dev}.iq"
-
-            DID=$(grep -o 'device id="[^"]*"' "$DBG_XML" | head -1 | sed -E 's/.*id="([^"]+)".*/\1/')
-            echo "Packaging ID from XML: '$DID' for $dev"
             echo "=== Package $dev -> $IQ ==="
-
-            # Tentative 1 : avec -d <ID>
-            set +e
             java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
-              -e \
-              -o "$IQ" \
-              -f "$JUNGLE" \
-              -y "$KEY" \
+              -e -o "$IQ" -f "$JUNGLE" -y "$KEY" \
               -i "$DBG_XML" \
-              -d "$DID" \
-              -p "$TOOLS/projectInfo.xml" \
-              -w -r
-            rc=$?
-            set -e
-
-            if [ $rc -ne 0 ]; then
-              echo "WARN: package with -d '$DID' failed (rc=$rc). Retrying WITHOUT -d."
-              java -Xms1g -Dfile.encoding=UTF-8 -jar "$JAR" \
-                -e \
-                -o "$IQ" \
-                -f "$JUNGLE" \
-                -y "$KEY" \
-                -i "$DBG_XML" \
-                -p "$TOOLS/projectInfo.xml" \
-                -w -r
-            fi
+              -p "$TOOLS/projectInfo.xml" -u "$TOOLS/devices.xml" -w -r
           done
 
       - uses: actions/upload-artifact@v4
         with:
           name: OWSwim_builds
           path: bin/*
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-logs
+          path: bin/*.log
+          if-no-files-found: ignore
